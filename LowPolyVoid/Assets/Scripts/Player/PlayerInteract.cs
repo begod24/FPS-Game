@@ -31,16 +31,20 @@ public class PlayerInteract : MonoBehaviour
     public System.Action<Interactable> OnInteractionStart;
     public System.Action<Interactable> OnInteractionComplete;
     public System.Action<Interactable> OnInteractionCancel;
+
+    private PlayerUI playerUI;
     
     void Start()
     {
+        // Get player UI component
+        playerUI = GetComponent<PlayerUI>();
         // Get camera reference
         if (interactionOrigin == null)
         {
             playerCamera = Camera.main;
             if (playerCamera == null)
                 playerCamera = FindObjectOfType<Camera>();
-            
+
             if (playerCamera != null)
                 interactionOrigin = playerCamera.transform;
         }
@@ -64,7 +68,7 @@ public class PlayerInteract : MonoBehaviour
             InputManager.Instance.OnInteractReleased += StopInteraction;
         }
     }
-    
+
     void Update()
     {
         CheckForInteractables();
