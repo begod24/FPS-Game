@@ -1,32 +1,39 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using System;
 
 public class UIInputManager : MonoBehaviour
 {
+    #region Singleton
     public static UIInputManager Instance { get; private set; }
-    
-    [Header("Input Action Asset")]
+    #endregion
+
+    #region Serialized Fields
+    [Header("Input Configuration")]
     [SerializeField] private InputActionAsset inputActions;
-    
+    #endregion
+
+    #region Input Actions
     private InputActionMap uiActionMap;
-    
-    // UI Actions (add these to your Input Actions if needed)
     private InputAction navigateAction;
     private InputAction submitAction;
     private InputAction cancelAction;
     private InputAction pauseAction;
-    
-    // Input Values
+    #endregion
+
+    #region Input Properties
     public Vector2 NavigateInput { get; private set; }
     public bool SubmitPressed { get; private set; }
     public bool CancelPressed { get; private set; }
     public bool PausePressed { get; private set; }
-    
-    // Events
-    public System.Action OnSubmitPressed;
-    public System.Action OnCancelPressed;
-    public System.Action OnPausePressed;
-    public System.Action<Vector2> OnNavigate;
+    #endregion
+
+    #region Events
+    public event Action OnSubmitPressed;
+    public event Action OnCancelPressed;
+    public event Action OnPausePressed;
+    public event Action<Vector2> OnNavigate;
+    #endregion
     
     void Awake()
     {

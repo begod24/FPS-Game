@@ -1,81 +1,102 @@
 using UnityEngine;
+using System.Collections.Generic;
+using System;
 
 /// <summary>
 /// A collectible item that can be picked up
 /// </summary>
 public class CollectibleItem : Interactable
 {
+    #region Serialized Fields
     [Header("Collectible Settings")]
     [SerializeField] private string itemName = "Item";
     [SerializeField] private int itemValue = 1;
     [SerializeField] private AudioClip pickupSound;
     [SerializeField] private GameObject pickupEffect;
     [SerializeField] private bool destroyOnPickup = true;
-    
+    #endregion
+
+    #region Private Fields
     private AudioSource audioSource;
-    private bool hasBeenPickedUp = false;
-    
+    private bool hasBeenPickedUp;
+    #endregion
+
+    #region Unity Lifecycle
     protected override void Awake()
     {
         base.Awake();
-        
-        // Set interaction prompt
-        interactionPrompt = $"Press E to pick up {itemName}";
-        
-        // Get audio source
-        audioSource = GetComponent<AudioSource>();
-        if (audioSource == null)
-            audioSource = gameObject.AddComponent<AudioSource>();
+        InitializeCollectible();
     }
-    
+    #endregion
+
+    #region Initialization
+    private void InitializeCollectible()
+    {
+        interactionPrompt = $"Press E to pick up {itemName}";
+        audioSource = GetComponent<AudioSource>() ?? gameObject.AddComponent<AudioSource>();
+    }
+    #endregion
+
+    #region Interaction Implementation
     protected override void PerformInteraction(GameObject player)
     {
-        if (hasBeenPickedUp) return;
-        
-        PickupItem(player);
+        if (!hasBeenPickedUp)
+        {
+            PickupItem(player);
+        }
     }
-    
-    public override bool CanInteract(GameObject player)
-    {
-        return !hasBeenPickedUp;
-    }
-    
+
+    public override bool CanInteract(GameObject player) => !hasBeenPickedUp;
+    #endregion
+
+    #region Item Pickup
     private void PickupItem(GameObject player)
     {
         hasBeenPickedUp = true;
         
         Debug.Log($"Picked up {itemName} (Value: {itemValue})");
         
-        // Play pickup sound
+        PlayPickupSound();
+        SpawnPickupEffect();
+        AddToPlayerInventory(player);
+        HandleItemDestruction();
+    }
+
+    private void PlayPickupSound()
+    {
         if (pickupSound != null && audioSource != null)
         {
             audioSource.PlayOneShot(pickupSound);
         }
-        
-        // Spawn pickup effect
+    }
+
+    private void SpawnPickupEffect()
+    {
         if (pickupEffect != null)
         {
             Instantiate(pickupEffect, transform.position, transform.rotation);
         }
-        
-        // Add to player inventory (you would implement this based on your inventory system)
+    }
+
+    private void AddToPlayerInventory(GameObject player)
+    {
         var playerInventory = player.GetComponent<PlayerInventory>();
-        if (playerInventory != null)
-        {
-            playerInventory.AddItem(itemName, itemValue);
-        }
-        
-        // Disable or destroy the item
+        playerInventory?.AddItem(itemName, itemValue);
+    }
+
+    private void HandleItemDestruction()
+    {
         if (destroyOnPickup)
         {
-            // Delay destruction slightly to allow sound to play
-            Destroy(gameObject, pickupSound != null ? pickupSound.length : 0.1f);
+            float destroyDelay = pickupSound != null ? pickupSound.length : 0.1f;
+            Destroy(gameObject, destroyDelay);
         }
         else
         {
             gameObject.SetActive(false);
         }
     }
+    #endregion
 }
 
 /// <summary>
@@ -83,7 +104,8 @@ public class CollectibleItem : Interactable
 /// </summary>
 public class PlayerInventory : MonoBehaviour
 {
-    [System.Serializable]
+    #region Nested Classes
+    [Serializable]
     public class InventoryItem
     {
         public string name;
@@ -95,12 +117,15 @@ public class PlayerInventory : MonoBehaviour
             quantity = itemQuantity;
         }
     }
-    
-    [SerializeField] private System.Collections.Generic.List<InventoryItem> items = new System.Collections.Generic.List<InventoryItem>();
-    
+    #endregion
+
+    #region Serialized Fields
+    [SerializeField] private List<InventoryItem> items = new List<InventoryItem>();
+    #endregion
+
+    #region Public API
     public void AddItem(string itemName, int quantity)
     {
-        // Check if item already exists
         var existingItem = items.Find(item => item.name == itemName);
         
         if (existingItem != null)
@@ -121,10 +146,7 @@ public class PlayerInventory : MonoBehaviour
         return item?.quantity ?? 0;
     }
     
-    public bool HasItem(string itemName)
-    {
-        return GetItemQuantity(itemName) > 0;
-    }
+    public bool HasItem(string itemName) => GetItemQuantity(itemName) > 0;
     
     public bool RemoveItem(string itemName, int quantity = 1)
     {
@@ -144,4 +166,5 @@ public class PlayerInventory : MonoBehaviour
         
         return false;
     }
+    #endregion
 }

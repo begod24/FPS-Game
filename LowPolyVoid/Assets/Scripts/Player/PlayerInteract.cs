@@ -1,14 +1,15 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
-using System.Collections;
+using System;
 
 public class PlayerInteract : MonoBehaviour
 {
+    #region Serialized Fields
     [Header("Interaction Settings")]
     [SerializeField] private float interactionRange = 3f;
     [SerializeField] private LayerMask interactionLayerMask = -1;
-    [SerializeField] private Transform interactionOrigin; // Usually the camera
+    [SerializeField] private Transform interactionOrigin;
     
     [Header("UI References")]
     [SerializeField] private GameObject interactionPromptUI;
@@ -16,52 +17,68 @@ public class PlayerInteract : MonoBehaviour
     [SerializeField] private Image holdProgressBar;
     [SerializeField] private GameObject holdProgressUI;
     
-    [Header("Interaction Feedback")]
-    [SerializeField] private bool enableInteractionSound = true;
+    [Header("Audio")]
     [SerializeField] private AudioClip interactionSound;
-    [SerializeField] private AudioSource audioSource;
-    
-    // Private variables
-    private Interactable currentInteractable;
-    private bool isHoldingInteraction = false;
-    private float holdTimer = 0f;
-    private Camera playerCamera;
-    
-    // Events
-    public System.Action<Interactable> OnInteractionStart;
-    public System.Action<Interactable> OnInteractionComplete;
-    public System.Action<Interactable> OnInteractionCancel;
+    #endregion
 
-    private PlayerUI playerUI;
-    
-    void Start()
+    #region Private Fields
+    private Interactable currentInteractable;
+    private bool isHoldingInteraction;
+    private float holdTimer;
+    private AudioSource audioSource;
+    #endregion
+
+    #region Events
+    public event Action<Interactable> OnInteractionStart;
+    public event Action<Interactable> OnInteractionComplete;
+    public event Action<Interactable> OnInteractionCancel;
+    #endregion
+    #region Unity Lifecycle
+    private void Start()
     {
-        // Get player UI component
-        playerUI = GetComponent<PlayerUI>();
-        // Get camera reference
+        InitializeComponents();
+        SetupInputEvents();
+        InitializeUI();
+    }
+
+    private void Update()
+    {
+        CheckForInteractables();
+        HandleHoldInteraction();
+    }
+
+    private void OnDestroy()
+    {
+        UnsubscribeFromInputEvents();
+        ClearEvents();
+    }
+    #endregion
+
+    #region Initialization
+    private void InitializeComponents()
+    {
+        SetupInteractionOrigin();
+        SetupAudioSource();
+    }
+
+    private void SetupInteractionOrigin()
+    {
         if (interactionOrigin == null)
         {
-            playerCamera = Camera.main;
-            if (playerCamera == null)
-                playerCamera = FindObjectOfType<Camera>();
-
+            Camera playerCamera = Camera.main ?? FindFirstObjectByType<Camera>();
             if (playerCamera != null)
                 interactionOrigin = playerCamera.transform;
         }
-        
-        // Get audio source if not assigned
+    }
+
+    private void SetupAudioSource()
+    {
         if (audioSource == null)
-            audioSource = GetComponent<AudioSource>();
-        if (audioSource == null)
-            audioSource = gameObject.AddComponent<AudioSource>();
-        
-        // Initialize UI
-        if (interactionPromptUI != null)
-            interactionPromptUI.SetActive(false);
-        if (holdProgressUI != null)
-            holdProgressUI.SetActive(false);
-        
-        // Subscribe to input events
+            audioSource = GetComponent<AudioSource>() ?? gameObject.AddComponent<AudioSource>();
+    }
+
+    private void SetupInputEvents()
+    {
         if (InputManager.Instance != null)
         {
             InputManager.Instance.OnInteractPressed += StartInteraction;
@@ -69,94 +86,114 @@ public class PlayerInteract : MonoBehaviour
         }
     }
 
-    void Update()
+    private void InitializeUI()
     {
-        CheckForInteractables();
-        HandleHoldInteraction();
+        if (interactionPromptUI != null) interactionPromptUI.SetActive(false);
+        if (holdProgressUI != null) holdProgressUI.SetActive(false);
     }
-    
+
+    private void UnsubscribeFromInputEvents()
+    {
+        if (InputManager.Instance != null)
+        {
+            InputManager.Instance.OnInteractPressed -= StartInteraction;
+            InputManager.Instance.OnInteractReleased -= StopInteraction;
+        }
+    }
+
+    private void ClearEvents()
+    {
+        OnInteractionStart = null;
+        OnInteractionComplete = null;
+        OnInteractionCancel = null;
+    }
+    #endregion
+    #region Interaction Detection
     private void CheckForInteractables()
     {
         if (interactionOrigin == null) return;
         
-        // Perform raycast from interaction origin
         Ray ray = new Ray(interactionOrigin.position, interactionOrigin.forward);
-        RaycastHit hit;
         
-        bool hitInteractable = false;
-        
-        if (Physics.Raycast(ray, out hit, interactionRange, interactionLayerMask))
+        if (Physics.Raycast(ray, out RaycastHit hit, interactionRange, interactionLayerMask) 
+            && hit.collider.TryGetComponent<Interactable>(out Interactable interactable))
         {
-            Interactable interactable = hit.collider.GetComponent<Interactable>();
-            
-            if (interactable != null)
-            {
-                hitInteractable = true;
-                
-                // Check if we're looking at a new interactable
-                if (currentInteractable != interactable)
-                {
-                    // Stop highlighting previous interactable
-                    if (currentInteractable != null)
-                        currentInteractable.OnStopHighlight();
-                    
-                    // Start highlighting new interactable
-                    currentInteractable = interactable;
-                    currentInteractable.OnStartHighlight();
-                    
-                    // Update UI
-                    ShowInteractionPrompt(currentInteractable.GetInteractionPrompt());
-                }
-            }
+            HandleNewInteractable(interactable);
+        }
+        else
+        {
+            ClearCurrentInteractable();
         }
         
-        // If we're not looking at an interactable anymore
-        if (!hitInteractable && currentInteractable != null)
-        {
-            currentInteractable.OnStopHighlight();
-            currentInteractable = null;
-            HideInteractionPrompt();
-            CancelHoldInteraction();
-        }
-        
-        // Debug ray
-        Debug.DrawRay(interactionOrigin.position, interactionOrigin.forward * interactionRange, 
-                     currentInteractable != null ? Color.green : Color.red);
+        DrawDebugRay();
     }
-    
-    private void StartInteraction()
+
+    private void HandleNewInteractable(Interactable newInteractable)
+    {
+        if (currentInteractable == newInteractable) return;
+        
+        ClearCurrentInteractable();
+        
+        currentInteractable = newInteractable;
+        currentInteractable.OnStartHighlight();
+        ShowInteractionPrompt(currentInteractable.GetInteractionPrompt());
+    }
+
+    private void ClearCurrentInteractable()
     {
         if (currentInteractable == null) return;
         
-        // Check if we can interact
-        if (!currentInteractable.CanInteract(gameObject)) return;
+        currentInteractable.OnStopHighlight();
+        currentInteractable = null;
+        HideInteractionPrompt();
+        CancelHoldInteraction();
+    }
+
+    private void DrawDebugRay()
+    {
+        Color rayColor = currentInteractable != null ? Color.green : Color.red;
+        Debug.DrawRay(interactionOrigin.position, interactionOrigin.forward * interactionRange, rayColor);
+    }
+    #endregion
+    #region Interaction Handling
+    private void StartInteraction()
+    {
+        if (!CanStartInteraction()) return;
         
         OnInteractionStart?.Invoke(currentInteractable);
         
         if (currentInteractable.RequiresHoldInteraction)
         {
-            // Start hold interaction
-            isHoldingInteraction = true;
-            holdTimer = 0f;
-            
-            if (holdProgressUI != null)
-                holdProgressUI.SetActive(true);
+            StartHoldInteraction();
         }
         else
         {
-            // Immediate interaction
             PerformInteraction();
         }
     }
-    
+
     private void StopInteraction()
     {
-        if (!isHoldingInteraction) return;
-        
-        // Cancel hold interaction if not completed
-        CancelHoldInteraction();
+        if (isHoldingInteraction)
+        {
+            CancelHoldInteraction();
+        }
     }
-    
+
+    private bool CanStartInteraction()
+    {
+        return currentInteractable != null && currentInteractable.CanInteract(gameObject);
+    }
+
+    private void StartHoldInteraction()
+    {
+        isHoldingInteraction = true;
+        holdTimer = 0f;
+        
+        if (holdProgressUI != null)
+            holdProgressUI.SetActive(true);
+    }
+
     private void HandleHoldInteraction()
     {
         if (!isHoldingInteraction || currentInteractable == null) return;
@@ -164,44 +201,50 @@ public class PlayerInteract : MonoBehaviour
         holdTimer += Time.deltaTime;
         float progress = holdTimer / currentInteractable.HoldDuration;
         
-        // Update progress bar
-        if (holdProgressBar != null)
-            holdProgressBar.fillAmount = progress;
-        
-        // Update interactable with progress
+        UpdateHoldProgress(progress);
         currentInteractable.OnHoldProgress(progress);
         
-        // Check if hold is complete
         if (progress >= 1f)
         {
-            PerformInteraction();
-            isHoldingInteraction = false;
-            
-            if (holdProgressUI != null)
-                holdProgressUI.SetActive(false);
+            CompleteHoldInteraction();
         }
     }
-    
+
+    private void UpdateHoldProgress(float progress)
+    {
+        if (holdProgressBar != null)
+            holdProgressBar.fillAmount = progress;
+    }
+
+    private void CompleteHoldInteraction()
+    {
+        PerformInteraction();
+        isHoldingInteraction = false;
+        
+        if (holdProgressUI != null)
+            holdProgressUI.SetActive(false);
+    }
+
     private void PerformInteraction()
     {
         if (currentInteractable == null) return;
         
-        // Play interaction sound
-        if (enableInteractionSound && interactionSound != null && audioSource != null)
-        {
-            audioSource.PlayOneShot(interactionSound);
-        }
-        
-        // Perform the interaction
+        PlayInteractionSound();
         currentInteractable.Interact(gameObject);
-        
         OnInteractionComplete?.Invoke(currentInteractable);
         
-        // Reset UI
         if (holdProgressUI != null)
             holdProgressUI.SetActive(false);
     }
-    
+
+    private void PlayInteractionSound()
+    {
+        if (interactionSound != null && audioSource != null)
+        {
+            audioSource.PlayOneShot(interactionSound);
+        }
+    }
+
     private void CancelHoldInteraction()
     {
         if (!isHoldingInteraction) return;
@@ -217,15 +260,16 @@ public class PlayerInteract : MonoBehaviour
         
         OnInteractionCancel?.Invoke(currentInteractable);
     }
-    
-    private void ShowInteractionPrompt(string promptText)
+    #endregion
+    #region UI Management
+    private void ShowInteractionPrompt(string prompt)
     {
         if (interactionPromptUI == null) return;
         
         interactionPromptUI.SetActive(true);
         
-        if (this.promptText != null)
-            this.promptText.text = promptText;
+        if (promptText != null)
+            promptText.text = prompt;
     }
     
     private void HideInteractionPrompt()
@@ -233,16 +277,15 @@ public class PlayerInteract : MonoBehaviour
         if (interactionPromptUI != null)
             interactionPromptUI.SetActive(false);
     }
-    
-    #region Public Methods
-    
+    #endregion
+
+    #region Public API
     /// <summary>
-    /// Force interact with a specific interactable (useful for scripted interactions)
+    /// Force interact with a specific interactable
     /// </summary>
-    /// <param name="interactable">The interactable to interact with</param>
     public void ForceInteract(Interactable interactable)
     {
-        if (interactable != null && interactable.CanInteract(gameObject))
+        if (interactable?.CanInteract(gameObject) == true)
         {
             interactable.Interact(gameObject);
         }
@@ -251,69 +294,37 @@ public class PlayerInteract : MonoBehaviour
     /// <summary>
     /// Get the currently highlighted interactable
     /// </summary>
-    /// <returns>The current interactable or null</returns>
-    public Interactable GetCurrentInteractable()
-    {
-        return currentInteractable;
-    }
+    public Interactable GetCurrentInteractable() => currentInteractable;
     
     /// <summary>
     /// Set the interaction range
     /// </summary>
-    /// <param name="range">New interaction range</param>
-    public void SetInteractionRange(float range)
-    {
-        interactionRange = range;
-    }
+    public void SetInteractionRange(float range) => interactionRange = range;
     
     /// <summary>
-    /// Enable or disable interaction
+    /// Enable or disable interaction system
     /// </summary>
-    /// <param name="enabled">Whether interaction should be enabled</param>
     public void SetInteractionEnabled(bool enabled)
     {
         this.enabled = enabled;
         
         if (!enabled)
         {
-            // Clean up when disabled
-            if (currentInteractable != null)
-            {
-                currentInteractable.OnStopHighlight();
-                currentInteractable = null;
-            }
-            HideInteractionPrompt();
-            CancelHoldInteraction();
+            ClearCurrentInteractable();
         }
     }
-    
     #endregion
-    
-    void OnDestroy()
+    #region Debug Visualization
+    private void OnDrawGizmosSelected()
     {
-        // Unsubscribe from input events
-        if (InputManager.Instance != null)
-        {
-            InputManager.Instance.OnInteractPressed -= StartInteraction;
-            InputManager.Instance.OnInteractReleased -= StopInteraction;
-        }
+        if (interactionOrigin == null) return;
         
-        // Clean up events
-        OnInteractionStart = null;
-        OnInteractionComplete = null;
-        OnInteractionCancel = null;
+        // Draw interaction range
+        Gizmos.color = Color.cyan;
+        Gizmos.DrawRay(interactionOrigin.position, interactionOrigin.forward * interactionRange);
+        
+        Gizmos.color = Color.blue;
+        Gizmos.DrawWireSphere(interactionOrigin.position + interactionOrigin.forward * interactionRange, 0.1f);
     }
-    
-    void OnDrawGizmosSelected()
-    {
-        if (interactionOrigin != null)
-        {
-            // Draw interaction range
-            Gizmos.color = Color.cyan;
-            Gizmos.DrawRay(interactionOrigin.position, interactionOrigin.forward * interactionRange);
-            
-            Gizmos.color = Color.blue;
-            Gizmos.DrawWireSphere(interactionOrigin.position + interactionOrigin.forward * interactionRange, 0.1f);
-        }
-    }
+    #endregion
 }
